@@ -55,6 +55,16 @@ No test runner is wired into CI for either app; verification so far has been man
 - **Node.js 20 + Express 4**, one file per route under `backend/api/v1/...`, each exporting a small Express app as its default export (Vercel's Node runtime can invoke an Express app instance directly as a serverless function — no `serverless-http` needed)
 - **Supabase** (`@supabase/supabase-js`) for Postgres, Auth, and Storage. `backend/lib/supabaseClient.ts` exports `supabaseAdmin`, a service-role client (bypasses RLS) for admin operations like `auth.admin.createUser` — never expose `SUPABASE_SERVICE_ROLE_KEY` to frontend code.
 - Auth is fully owned by **Supabase Auth** (`auth.users`). App tables never store passwords or hashes — see `apex-context-files/decisions.md` (2026-07-26): a hand-rolled `password_hash` column was explicitly rejected in favor of `supabase.auth.admin.createUser` / `signInWithPassword`. The app's `public.users` table only mirrors `user_id` (FK to `auth.users.id`) plus profile fields.
+- `backend/lib/auth.ts` exports `requireAuth`, an Express middleware shared by every `auth:bearer` route: reads `Authorization: Bearer <token>`, validates it via `supabaseAdmin.auth.getUser(token)`, and attaches `req.userId`. Route handlers import it rather than re-checking bearer tokens themselves.
+
+### Session handling (frontend ↔ backend)
+
+There is no cross-service routing configured yet (no `next.config.mjs` rewrite, no `vercel.json`) — `BACKEND_URL` (`frontend/lib/session.ts`, defaults to `http://localhost:3001`) is how any frontend server-side code reaches the backend. **Known gap:** `RegistrationForm` and `LoginForm` still `fetch("/api/v1/auth/...")` as a bare relative path, which only resolves if something proxies `/api/v1/*` to the backend — nothing does yet. That's pre-existing from stories 9431617/9431618, not fixed here; worth a dedicated infra task.
+
+The auth token is a Supabase session JWT, stored as an **HttpOnly cookie** (`outfolio_token`, see `frontend/lib/session.ts`) set by `frontend/app/api/session/route.ts` right after login. This exists because a server component (like `app/profile/page.tsx`) can't read `localStorage`, and because HttpOnly means client JS can't read the cookie either (so a client component can't attach the header itself). The pattern that falls out of this:
+- Server components read the cookie directly via `next/headers`' `cookies()` and attach the header themselves (see `app/profile/page.tsx`'s `fetchProfile`).
+- Client components that need to call an authed backend endpoint go through a same-origin Next.js Route Handler that reads the cookie server-side and forwards the request with the header added (see `frontend/app/api/profile/route.ts` proxying to `PUT /api/v1/users/me/profile`). Don't have a client component try to attach `Authorization` itself — it has no way to read the token.
+- No refresh-token handling exists; the cookie's `maxAge` (1h) just matches Supabase's default access-token TTL. Revisit when a session-refresh or logout story lands.
 
 ### Data layer
 
@@ -66,6 +76,8 @@ No test runner is wired into CI for either app; verification so far has been man
 
 - `POST /api/v1/auth/register` (`backend/api/v1/auth/register.ts`) — creates the Supabase Auth user first, then inserts the `public.users` profile row keyed by the returned auth id; rolls back the auth user if the profile insert fails. Returns 400/409/422/500 per `EP-1`.
 - `POST /api/v1/auth/login` (`backend/api/v1/auth/login.ts`) — resolves `username` → `email` against `public.users`, then delegates to `supabase.auth.signInWithPassword`. Checks username existence (404) before attempting sign-in (401), so an unregistered username never falls through to a generic invalid-credentials message. Returns `{ token, userId }` per `EP-2`.
+- `GET /api/v1/users/me/profile` (`backend/api/v1/users/me/profile.ts`) — `requireAuth`-gated, returns the authenticated user's profile fields (camelCase) per `EP-3`.
+- `PUT /api/v1/users/me/profile` (same file) — `requireAuth`-gated, partial update. `name` is treated as required on every call despite `EP-4` marking it `name?:string` — the dev pack's own steps/Test Assertions and `SC-2` both demand 400 on a missing name; all other fields are genuinely optional/partial. Rejects the whole update (422) if any `links[].url` is invalid — no partial save.
 
 ### Routing (frontend, App Router)
 
@@ -75,13 +87,16 @@ File-based routing under `frontend/app/`:
 - `app/new/page.tsx` → `/new` (create project flow — client component)
 - `app/register/page.tsx` → `/register` (registration form, server component wrapping the client `RegistrationForm`)
 - `app/login/page.tsx` → `/login` (login form, server component wrapping the client `LoginForm`)
+- `app/profile/page.tsx` → `/profile` (server component; reads the session cookie, redirects to `/login` if missing/rejected, fetches `GET /api/v1/users/me/profile`, renders the editable `ProfileEditForm`)
+- `app/api/session/route.ts` → `POST /api/session` (sets the HttpOnly session cookie after login)
+- `app/api/profile/route.ts` → `PUT /api/profile` (proxies to the backend PUT endpoint, attaching the Bearer header from the cookie)
 - `app/developer/[username]/page.tsx` → developer public profile (server component; uses `notFound()` for missing users)
 - `app/project/[slug]/page.tsx` → project case-study page (server component; uses `notFound()` for missing projects)
 - `app/layout.tsx` — root layout: fonts, `<Analytics />`, global metadata/viewport
 
-Pages default to server components; anything using hooks/state/refs is explicitly marked `"use client"` (see `app/discover/page.tsx`, `app/new/page.tsx`, `components/like-button.tsx`, `components/auth/RegistrationForm.tsx`, `components/auth/LoginForm.tsx`). Follow that split when adding pages — don't make a page a client component just to import one that needs it; push `"use client"` down to the smallest component that needs interactivity.
+Pages default to server components; anything using hooks/state/refs is explicitly marked `"use client"` (see `app/discover/page.tsx`, `app/new/page.tsx`, `components/like-button.tsx`, `components/auth/RegistrationForm.tsx`, `components/auth/LoginForm.tsx`, `components/profile/ProfileEditForm.tsx`). Follow that split when adding pages — don't make a page a client component just to import one that needs it; push `"use client"` down to the smallest component that needs interactivity.
 
-A server-component page **cannot** pass a function prop (e.g. an `onSuccess` callback) to a client child — functions aren't serializable across the RSC boundary. `LoginForm` handles its own post-login redirect internally via `next/navigation`'s `useRouter` rather than delegating to `app/login/page.tsx`, for exactly this reason. There's no `/dashboard` or `/profile` page yet (Profile Page `{SCR-3}` is story 9431619, unbuilt) — `LoginForm` currently redirects to `/` as a placeholder; revisit once a real post-login destination exists.
+A server-component page **cannot** pass a function prop to a client child — functions aren't serializable across the RSC boundary. This has come up twice: `LoginForm` handles its own post-login redirect (to `/profile`) internally via `useRouter` rather than `app/login/page.tsx` passing a callback, and `ProfileEditForm` calls `router.refresh()` itself after a successful save rather than `app/profile/page.tsx` passing a refresh callback. Default to this pattern — client component owns its own post-action navigation/refresh — whenever the parent page needs to stay a server component.
 
 ### Path aliases
 
@@ -97,5 +112,6 @@ Tailwind v4 tokens defined in `frontend/app/globals.css` (`@theme inline` block 
 - `components/project-card.tsx` — project summary card (used on home + discover + developer profile)
 - `components/like-button.tsx` — client component, local-only like state (no backend persistence yet)
 - `components/auth/RegistrationForm.tsx` — client component, calls `POST /api/v1/auth/register`, maps 409/422 to inline field errors
-- `components/auth/LoginForm.tsx` — client component, calls `POST /api/v1/auth/login`, maps 401/404 to inline errors, redirects via `useRouter` on success
+- `components/auth/LoginForm.tsx` — client component, calls `POST /api/v1/auth/login`, maps 401/404 to inline errors, persists the session cookie via `POST /api/session`, redirects to `/profile` via `useRouter` on success
+- `components/profile/ProfileEditForm.tsx` — client component, editable name/bio/experienceYears/certifications/links (tag-input pattern reused from `app/new/page.tsx`); validates client-side, submits via `PUT /api/profile` (same-origin proxy, not the backend directly), maps 400/422 to inline errors, calls `router.refresh()` on success
 - `components/ui/*` — shadcn primitives (Base UI-backed): avatar, badge, button, card, dropdown-menu, input, label, select, separator, tabs, textarea, tooltip
