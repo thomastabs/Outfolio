@@ -65,6 +65,7 @@ No test runner is wired into CI for either app; verification so far has been man
 ### API endpoints implemented so far
 
 - `POST /api/v1/auth/register` (`backend/api/v1/auth/register.ts`) — creates the Supabase Auth user first, then inserts the `public.users` profile row keyed by the returned auth id; rolls back the auth user if the profile insert fails. Returns 400/409/422/500 per `EP-1`.
+- `POST /api/v1/auth/login` (`backend/api/v1/auth/login.ts`) — resolves `username` → `email` against `public.users`, then delegates to `supabase.auth.signInWithPassword`. Checks username existence (404) before attempting sign-in (401), so an unregistered username never falls through to a generic invalid-credentials message. Returns `{ token, userId }` per `EP-2`.
 
 ### Routing (frontend, App Router)
 
@@ -73,11 +74,14 @@ File-based routing under `frontend/app/`:
 - `app/discover/page.tsx` → `/discover` (browse projects — client component, filters via `useState`/`useMemo`)
 - `app/new/page.tsx` → `/new` (create project flow — client component)
 - `app/register/page.tsx` → `/register` (registration form, server component wrapping the client `RegistrationForm`)
+- `app/login/page.tsx` → `/login` (login form, server component wrapping the client `LoginForm`)
 - `app/developer/[username]/page.tsx` → developer public profile (server component; uses `notFound()` for missing users)
 - `app/project/[slug]/page.tsx` → project case-study page (server component; uses `notFound()` for missing projects)
 - `app/layout.tsx` — root layout: fonts, `<Analytics />`, global metadata/viewport
 
-Pages default to server components; anything using hooks/state/refs is explicitly marked `"use client"` (see `app/discover/page.tsx`, `app/new/page.tsx`, `components/like-button.tsx`, `components/auth/RegistrationForm.tsx`). Follow that split when adding pages — don't make a page a client component just to import one that needs it; push `"use client"` down to the smallest component that needs interactivity.
+Pages default to server components; anything using hooks/state/refs is explicitly marked `"use client"` (see `app/discover/page.tsx`, `app/new/page.tsx`, `components/like-button.tsx`, `components/auth/RegistrationForm.tsx`, `components/auth/LoginForm.tsx`). Follow that split when adding pages — don't make a page a client component just to import one that needs it; push `"use client"` down to the smallest component that needs interactivity.
+
+A server-component page **cannot** pass a function prop (e.g. an `onSuccess` callback) to a client child — functions aren't serializable across the RSC boundary. `LoginForm` handles its own post-login redirect internally via `next/navigation`'s `useRouter` rather than delegating to `app/login/page.tsx`, for exactly this reason. There's no `/dashboard` or `/profile` page yet (Profile Page `{SCR-3}` is story 9431619, unbuilt) — `LoginForm` currently redirects to `/` as a placeholder; revisit once a real post-login destination exists.
 
 ### Path aliases
 
@@ -93,4 +97,5 @@ Tailwind v4 tokens defined in `frontend/app/globals.css` (`@theme inline` block 
 - `components/project-card.tsx` — project summary card (used on home + discover + developer profile)
 - `components/like-button.tsx` — client component, local-only like state (no backend persistence yet)
 - `components/auth/RegistrationForm.tsx` — client component, calls `POST /api/v1/auth/register`, maps 409/422 to inline field errors
+- `components/auth/LoginForm.tsx` — client component, calls `POST /api/v1/auth/login`, maps 401/404 to inline errors, redirects via `useRouter` on success
 - `components/ui/*` — shadcn primitives (Base UI-backed): avatar, badge, button, card, dropdown-menu, input, label, select, separator, tabs, textarea, tooltip
