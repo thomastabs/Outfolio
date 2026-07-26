@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -27,7 +28,7 @@ type FieldErrors = {
 
 type ProfileEditFormProps = {
   initialValues: ProfileFormData
-  onSave: (data: ProfileFormData) => void | Promise<void>
+  onSave?: (data: ProfileFormData) => void | Promise<void>
 }
 
 function isValidUrl(value: string): boolean {
@@ -40,6 +41,7 @@ function isValidUrl(value: string): boolean {
 }
 
 export function ProfileEditForm({ initialValues, onSave }: ProfileEditFormProps) {
+  const router = useRouter()
   const [name, setName] = useState(initialValues.name)
   const [bio, setBio] = useState(initialValues.bio)
   const [experienceYears, setExperienceYears] = useState(
@@ -93,8 +95,35 @@ export function ProfileEditForm({ initialValues, onSave }: ProfileEditFormProps)
     }
 
     setSubmitting(true)
+    setErrors({})
     try {
-      await onSave(data)
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      })
+      const body = await res.json().catch(() => ({}))
+
+      if (res.status === 200) {
+        await onSave?.(data)
+        // Server component (app/profile/page.tsx) needs to re-fetch to
+        // reflect the change; it can't receive a callback prop from us
+        // since the page stays a server component (same reasoning as
+        // LoginForm's own redirect).
+        router.refresh()
+        return
+      }
+      if (res.status === 400) {
+        setErrors({ name: body.message ?? "Name is required." })
+        return
+      }
+      if (res.status === 422) {
+        setErrors({ links: body.message ?? "Enter valid URLs for all links." })
+        return
+      }
+      setErrors({ form: body.message ?? "Something went wrong. Try again." })
+    } catch {
+      setErrors({ form: "Something went wrong. Try again." })
     } finally {
       setSubmitting(false)
     }

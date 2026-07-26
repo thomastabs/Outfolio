@@ -2,6 +2,7 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
+import { ProfileEditForm } from "@/components/profile/ProfileEditForm"
 import { SESSION_COOKIE, BACKEND_URL } from "@/lib/session"
 
 type LinkEntry = { label?: string; url: string }
@@ -50,64 +51,18 @@ export default async function ProfilePage() {
             <p className="mt-1 text-sm text-muted-foreground">@{profile.username}</p>
           </div>
 
-          <div className="space-y-6 rounded-xl border border-border bg-card p-6">
-            <Field label="Name" value={profile.name} />
-            <Field label="Bio" value={profile.bio} />
-            <Field
-              label="OutSystems experience"
-              value={profile.experienceYears != null ? `${profile.experienceYears} years` : null}
-            />
-            <div>
-              <div className="text-xs text-muted-foreground">Certifications</div>
-              {profile.certifications.length > 0 ? (
-                <ul className="mt-1 flex flex-wrap gap-1.5">
-                  {profile.certifications.map((c) => (
-                    <li
-                      key={c}
-                      className="rounded-full border border-border bg-background px-2.5 py-0.5 text-xs"
-                    >
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-1 text-sm">—</p>
-              )}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Links</div>
-              {profile.links.length > 0 ? (
-                <ul className="mt-1 space-y-1">
-                  {profile.links.map((link) => (
-                    <li key={link.url}>
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-sm text-primary underline underline-offset-4"
-                      >
-                        {link.label ?? link.url}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-1 text-sm">—</p>
-              )}
-            </div>
-          </div>
+          <ProfileEditForm
+            initialValues={{
+              name: profile.name,
+              bio: profile.bio ?? "",
+              experienceYears: profile.experienceYears,
+              certifications: profile.certifications,
+              links: profile.links.map((l) => ({ label: l.label ?? "", url: l.url })),
+            }}
+          />
         </div>
       </main>
       <SiteFooter />
-    </div>
-  )
-}
-
-function Field({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <p className="mt-1 text-sm">{value || "—"}</p>
     </div>
   )
 }
