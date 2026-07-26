@@ -1,0 +1,22 @@
+{
+  "name": "outfolio-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.16.5",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.0.5"
+  }
+}
