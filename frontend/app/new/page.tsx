@@ -147,7 +147,7 @@ export default function NewProjectPage() {
                 </Field>
                 <div className="grid gap-5 sm:grid-cols-2">
                   <Field label="Platform" htmlFor="platform">
-                    <Select value={platform} onValueChange={setPlatform}>
+                    <Select value={platform} onValueChange={(value) => setPlatform(value ?? "OutSystems 11")}>
                       <SelectTrigger id="platform">
                         <SelectValue />
                       </SelectTrigger>
@@ -163,7 +163,7 @@ export default function NewProjectPage() {
                     </Select>
                   </Field>
                   <Field label="Category" htmlFor="category">
-                    <Select value={category} onValueChange={setCategory}>
+                    <Select value={category} onValueChange={(value) => setCategory(value ?? "Logistics")}>
                       <SelectTrigger id="category">
                         <SelectValue />
                       </SelectTrigger>

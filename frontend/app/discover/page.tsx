@@ -67,7 +67,7 @@ export default function DiscoverPage() {
               />
             </div>
             <div className="flex flex-wrap gap-3">
-              <Select value={category} onValueChange={setCategory}>
+              <Select value={category} onValueChange={(value) => setCategory(value ?? "")}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
@@ -79,7 +79,7 @@ export default function DiscoverPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={platform} onValueChange={setPlatform}>
+              <Select value={platform} onValueChange={(value) => setPlatform(value ?? "")}>
                 <SelectTrigger className="w-[170px]">
                   <SelectValue placeholder="Platform" />
                 </SelectTrigger>
@@ -91,7 +91,7 @@ export default function DiscoverPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={sort} onValueChange={setSort}>
+              <Select value={sort} onValueChange={(value) => setSort(value ?? "popular")}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue placeholder="Sort" />
                 </SelectTrigger>
