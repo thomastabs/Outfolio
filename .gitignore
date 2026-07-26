@@ -10,6 +10,13 @@ node_modules/
 dist/
 .output/
 .vinxi/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Non-canonical lockfiles (this repo uses pnpm)
+package-lock.json
+yarn.lock
 
 # Logs
 *.log
