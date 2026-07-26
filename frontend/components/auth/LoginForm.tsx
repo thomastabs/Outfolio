@@ -54,9 +54,14 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
       if (res.status === 200) {
         setErrors({})
         onSuccess?.({ token: body.token, userId: body.userId })
-        // No dashboard/profile page exists yet (Profile Page {SCR-3} is story
-        // 9431619, not built yet) - redirect home until it ships.
-        router.push("/")
+        // Persist the token as an HttpOnly cookie so server components
+        // (e.g. /profile) can read it via next/headers.
+        await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: body.token }),
+        })
+        router.push("/profile")
         return
       }
       if (res.status === 401) {
