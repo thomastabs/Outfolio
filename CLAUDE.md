@@ -22,22 +22,23 @@ Two independent apps, no shared workspace config:
 **Frontend** (run from `frontend/`):
 - `pnpm install` — install deps (`pnpm-lock.yaml`)
 - `pnpm dev` — dev server (`next dev`)
-- `pnpm build` — production build
+- `pnpm build` — production build (now genuinely type-checks — see below)
 - `pnpm lint` — eslint
+- `pnpm test` — vitest (jsdom + React Testing Library)
 
-`next.config.mjs` sets `typescript.ignoreBuildErrors: true` — `next build` does **not** type-check. Run `npx tsc --noEmit -p tsconfig.json` separately to actually catch type errors.
+`next.config.mjs`'s `typescript.ignoreBuildErrors` was `true` (silently skipping type errors) until 2026-07-26; it's now `false`, so `next build` actually fails on type errors. `npx tsc --noEmit -p tsconfig.json` still works as a faster standalone check.
 
 **Backend** (run from `backend/`):
 - `npm install` — install deps
 - `npm run build` — `tsc -p tsconfig.json`
-- `npm test` — vitest (no test files exist yet)
+- `npm test` — vitest (node environment, no DOM)
 
 **Supabase** (run from `backend/`):
 - `npx supabase link --project-ref qomwalqhlzaypjeqzzuc` — link CLI to the hosted project
 - `npx supabase db push` — apply pending migrations to the linked remote project
 - `npx supabase start` — local Docker-based stack (Postgres/Auth/Storage) for offline testing; requires Docker daemon running
 
-No test runner is wired into CI for either app; verification so far has been manual (`tsc`, `next build`, `supabase migration list` against the real project).
+Both apps now have real vitest suites (backend: route handlers with `supabaseAdmin` mocked; frontend: `RegistrationForm`/`LoginForm`/`ProfileEditForm` with `fetch` and `next/navigation` mocked) — unit-level, not integration tests against a live Supabase instance or a running app. Neither is wired into CI yet. **`frontend/pnpm-lock.yaml` may be out of sync** with `package.json` — the sandbox this was built in can't run pnpm (`corepack pnpm` throws `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), so dependency verification there used a throwaway `npm install`, never committed. Run `pnpm install` locally once to regenerate the lockfile properly.
 
 ## Architecture
 
@@ -105,6 +106,10 @@ A server-component page **cannot** pass a function prop to a client child — fu
 ### Styling
 
 Tailwind v4 tokens defined in `frontend/app/globals.css` (`@theme inline` block + `:root`/`.dark` OKLCH variables), imported alongside `shadcn/tailwind.css`. Light/dark handled via `.dark` class and a `prefers-color-scheme` media fallback for un-set themes. Stick to the existing shadcn color tokens (`background`, `foreground`, `primary`, `muted`, `accent`, `sidebar-*`, `chart-*`, etc.) rather than introducing new ad-hoc CSS variables.
+
+### Testing
+
+`frontend/vitest.config.ts` does **not** set `globals: true` — test files import `describe`/`it`/`expect`/`vi` explicitly from `"vitest"` rather than relying on ambient globals. Because of that, React Testing Library's automatic per-test `cleanup()` (which detects a global `afterEach`) doesn't fire on its own; `frontend/vitest.setup.ts` registers it manually (`afterEach(cleanup)`). Skipping this silently leaves previous tests' DOM trees mounted, which surfaces as confusing "found multiple elements" errors in a *later* test in the same file, not the one that actually leaked.
 
 ### Components
 
