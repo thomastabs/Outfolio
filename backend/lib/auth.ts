@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { supabaseAdmin } from "./supabaseClient.js";
 
-export interface AuthedRequest extends Request {
+export interface AuthedRequest<P = unknown, ResBody = unknown, ReqBody = unknown>
+  extends Request<P, ResBody, ReqBody> {
   userId?: string;
 }
 
