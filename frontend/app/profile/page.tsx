@@ -3,9 +3,15 @@ import { redirect } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
 import { ProfileEditForm } from "@/components/profile/ProfileEditForm"
+import { ProfileVisibilitySettings } from "@/components/profile/ProfileVisibilitySettings"
 import { SESSION_COOKIE, BACKEND_URL } from "@/lib/session"
 
 type LinkEntry = { label?: string; url: string }
+
+type VisibilitySettings = {
+  visibility?: string
+  fieldVisibility?: Record<string, string>
+}
 
 type Profile = {
   username: string
@@ -14,7 +20,7 @@ type Profile = {
   experienceYears: number | null
   certifications: string[]
   links: LinkEntry[]
-  visibilitySettings: Record<string, unknown>
+  visibilitySettings: VisibilitySettings
 }
 
 async function fetchProfile(token: string): Promise<Profile | null> {
@@ -51,15 +57,23 @@ export default async function ProfilePage() {
             <p className="mt-1 text-sm text-muted-foreground">@{profile.username}</p>
           </div>
 
-          <ProfileEditForm
-            initialValues={{
-              name: profile.name,
-              bio: profile.bio ?? "",
-              experienceYears: profile.experienceYears,
-              certifications: profile.certifications,
-              links: profile.links.map((l) => ({ label: l.label ?? "", url: l.url })),
-            }}
-          />
+          <div className="space-y-6">
+            <ProfileEditForm
+              initialValues={{
+                name: profile.name,
+                bio: profile.bio ?? "",
+                experienceYears: profile.experienceYears,
+                certifications: profile.certifications,
+                links: profile.links.map((l) => ({ label: l.label ?? "", url: l.url })),
+              }}
+            />
+            <ProfileVisibilitySettings
+              initialSettings={{
+                visibility: profile.visibilitySettings.visibility ?? "public",
+                fieldVisibility: profile.visibilitySettings.fieldVisibility ?? {},
+              }}
+            />
+          </div>
         </div>
       </main>
       <SiteFooter />
