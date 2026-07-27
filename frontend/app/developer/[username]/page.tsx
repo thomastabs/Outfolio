@@ -28,22 +28,35 @@ type PublicProfile = {
   fieldsVisible: Record<string, boolean>
 }
 
+type FetchProfileResult = {
+  profile: PublicProfile | null
+  isPrivate: boolean
+  isError: boolean
+}
+
 // Fetches the real backend profile. Falls back (via the caller) to
-// mock-data.ts when the user doesn't exist there yet - Projects/portfolio
+// mock-data.ts when the user doesn't exist there yet, or when the backend
+// is simply unreachable (e.g. not running locally) - Projects/portfolio
 // isn't a real feature (still story 9431636+), so the demo developers
 // only ever exist in mock-data.ts, never in the real users table. See
 // decisions.md (2026-07-27) for why this is a deliberate partial migration.
-async function fetchPublicProfile(username: string): Promise<{ profile: PublicProfile | null; isPrivate: boolean }> {
+//
+// A genuine 5xx from a *running* backend is different from "not running" -
+// don't silently paper over a real server error with mock/404 fallback.
+async function fetchPublicProfile(username: string): Promise<FetchProfileResult> {
+  let res: Response
   try {
-    const res = await fetch(`${BACKEND_URL}/api/v1/users/${encodeURIComponent(username)}/public-profile`, {
+    res = await fetch(`${BACKEND_URL}/api/v1/users/${encodeURIComponent(username)}/public-profile`, {
       cache: "no-store",
     })
-    if (res.status === 403) return { profile: null, isPrivate: true }
-    if (!res.ok) return { profile: null, isPrivate: false }
-    return { profile: await res.json(), isPrivate: false }
   } catch {
-    return { profile: null, isPrivate: false }
+    return { profile: null, isPrivate: false, isError: false }
   }
+
+  if (res.status === 403) return { profile: null, isPrivate: true, isError: false }
+  if (res.status === 404) return { profile: null, isPrivate: false, isError: false }
+  if (!res.ok) return { profile: null, isPrivate: false, isError: true }
+  return { profile: await res.json(), isPrivate: false, isError: false }
 }
 
 function mockToPublicProfile(username: string): PublicProfile | null {
@@ -74,26 +87,27 @@ function initialsFrom(name?: string) {
 export default async function DeveloperPage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params
 
-  const { profile: apiProfile, isPrivate } = await fetchPublicProfile(username)
-  const profile = apiProfile ?? mockToPublicProfile(username)
+  const { profile: apiProfile, isPrivate, isError } = await fetchPublicProfile(username)
 
   if (isPrivate) {
     return (
-      <div className="flex min-h-dvh flex-col">
-        <SiteHeader />
-        <main className="flex-1">
-          <div className="mx-auto max-w-2xl px-4 py-24 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight">This profile is not available</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              The developer you&apos;re looking for has set their profile to private.
-            </p>
-          </div>
-        </main>
-        <SiteFooter />
-      </div>
+      <MessagePage
+        title="This profile is not available"
+        message="The developer you're looking for has set their profile to private."
+      />
     )
   }
 
+  if (isError) {
+    return (
+      <MessagePage
+        title="Something went wrong"
+        message="We couldn't load this profile right now. Try again in a moment."
+      />
+    )
+  }
+
+  const profile = apiProfile ?? mockToPublicProfile(username)
   if (!profile) notFound()
 
   // Skills/followers/"open to work"/avatar styling have no real backend
@@ -203,6 +217,21 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
               <p className="mt-6 text-sm text-muted-foreground">No published projects yet.</p>
             )}
           </div>
+        </div>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+function MessagePage({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="flex min-h-dvh flex-col">
+      <SiteHeader />
+      <main className="flex-1">
+        <div className="mx-auto max-w-2xl px-4 py-24 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{message}</p>
         </div>
       </main>
       <SiteFooter />
