@@ -1,4 +1,3 @@
-import Link from "next/link"
 import { notFound } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
@@ -7,9 +6,10 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
+import { PublicProfileFields } from "@/components/developer/PublicProfileFields"
 import { getDeveloper, getProjectsByDeveloper, developers } from "@/lib/mock-data"
 import { BACKEND_URL } from "@/lib/session"
-import { MapPin, BadgeCheck, ExternalLink, UserPlus, Mail } from "lucide-react"
+import { MapPin, UserPlus, Mail } from "lucide-react"
 
 export function generateStaticParams() {
   return developers.map((d) => ({ username: d.username }))
@@ -159,12 +159,12 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[280px_1fr]">
           {/* Sidebar */}
           <aside className="space-y-8">
-            {profile.fieldsVisible.bio !== false && profile.bio && (
-              <div>
-                <h2 className="text-sm font-medium text-muted-foreground">About</h2>
-                <p className="mt-3 text-sm leading-relaxed">{profile.bio}</p>
-              </div>
-            )}
+            <PublicProfileFields
+              bio={profile.bio}
+              certifications={profile.certifications}
+              links={profile.links}
+              fieldsVisible={profile.fieldsVisible}
+            />
             {mockExtras && mockExtras.skills.length > 0 && (
               <>
                 <Separator />
@@ -177,44 +177,6 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
                       </Badge>
                     ))}
                   </div>
-                </div>
-              </>
-            )}
-            {profile.fieldsVisible.certifications !== false &&
-              profile.certifications &&
-              profile.certifications.length > 0 && (
-                <>
-                  <Separator />
-                  <div>
-                    <h2 className="text-sm font-medium text-muted-foreground">Certifications</h2>
-                    <ul className="mt-3 space-y-2">
-                      {profile.certifications.map((c) => (
-                        <li key={c} className="flex items-start gap-2 text-sm">
-                          <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                          <span>{c}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              )}
-            {profile.fieldsVisible.links !== false && profile.links && profile.links.length > 0 && (
-              <>
-                <Separator />
-                <div>
-                  <h2 className="text-sm font-medium text-muted-foreground">Links</h2>
-                  <ul className="mt-3 space-y-2">
-                    {profile.links.map((l) => (
-                      <li key={l.url}>
-                        <Link
-                          href={l.url}
-                          className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-primary"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" /> {l.label || l.url}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
                 </div>
               </>
             )}
