@@ -8,20 +8,103 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
 import { getDeveloper, getProjectsByDeveloper, developers } from "@/lib/mock-data"
+import { BACKEND_URL } from "@/lib/session"
 import { MapPin, BadgeCheck, ExternalLink, UserPlus, Mail } from "lucide-react"
 
 export function generateStaticParams() {
   return developers.map((d) => ({ username: d.username }))
 }
 
+type LinkEntry = { label?: string; url: string }
+
+type PublicProfile = {
+  username: string
+  name?: string
+  bio?: string
+  experienceYears?: number
+  certifications?: string[]
+  links?: LinkEntry[]
+  visibility: string
+  fieldsVisible: Record<string, boolean>
+}
+
+// Fetches the real backend profile. Falls back (via the caller) to
+// mock-data.ts when the user doesn't exist there yet - Projects/portfolio
+// isn't a real feature (still story 9431636+), so the demo developers
+// only ever exist in mock-data.ts, never in the real users table. See
+// decisions.md (2026-07-27) for why this is a deliberate partial migration.
+async function fetchPublicProfile(username: string): Promise<{ profile: PublicProfile | null; isPrivate: boolean }> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/users/${encodeURIComponent(username)}/public-profile`, {
+      cache: "no-store",
+    })
+    if (res.status === 403) return { profile: null, isPrivate: true }
+    if (!res.ok) return { profile: null, isPrivate: false }
+    return { profile: await res.json(), isPrivate: false }
+  } catch {
+    return { profile: null, isPrivate: false }
+  }
+}
+
+function mockToPublicProfile(username: string): PublicProfile | null {
+  const dev = getDeveloper(username)
+  if (!dev) return null
+  return {
+    username: dev.username,
+    name: dev.name,
+    bio: dev.bio,
+    experienceYears: dev.experienceYears,
+    certifications: dev.certifications,
+    links: dev.links.map((l) => ({ label: l.label, url: l.href })),
+    visibility: "public",
+    fieldsVisible: { name: true, bio: true, experienceYears: true, certifications: true, links: true },
+  }
+}
+
+function initialsFrom(name?: string) {
+  if (!name) return "?"
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("")
+}
+
 export default async function DeveloperPage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params
-  const dev = getDeveloper(username)
-  if (!dev) notFound()
 
+  const { profile: apiProfile, isPrivate } = await fetchPublicProfile(username)
+  const profile = apiProfile ?? mockToPublicProfile(username)
+
+  if (isPrivate) {
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <SiteHeader />
+        <main className="flex-1">
+          <div className="mx-auto max-w-2xl px-4 py-24 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight">This profile is not available</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              The developer you&apos;re looking for has set their profile to private.
+            </p>
+          </div>
+        </main>
+        <SiteFooter />
+      </div>
+    )
+  }
+
+  if (!profile) notFound()
+
+  // Skills/followers/"open to work"/avatar styling have no real backend
+  // field yet - only ever present for the mock demo developers.
+  const mockExtras = getDeveloper(username)
   const devProjects = getProjectsByDeveloper(username)
   const totalLikes = devProjects.reduce((sum, p) => sum + p.likes, 0)
   const totalViews = devProjects.reduce((sum, p) => sum + p.views, 0)
+  const initials = mockExtras?.initials ?? initialsFrom(profile.name)
+  const avatarColor = mockExtras?.avatarColor ?? "var(--chart-1)"
+  const displayName = profile.fieldsVisible.name !== false && profile.name ? profile.name : `@${profile.username}`
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -33,27 +116,31 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
             <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
               <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
                 <Avatar className="h-24 w-24">
-                  <AvatarFallback className="text-2xl" style={{ backgroundColor: dev.avatarColor }}>
-                    {dev.initials}
+                  <AvatarFallback className="text-2xl" style={{ backgroundColor: avatarColor }}>
+                    {initials}
                   </AvatarFallback>
                 </Avatar>
                 <div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <h1 className="text-3xl font-semibold tracking-tight">{dev.name}</h1>
-                    {dev.available && (
+                    <h1 className="text-3xl font-semibold tracking-tight">{displayName}</h1>
+                    {mockExtras?.available && (
                       <Badge className="gap-1.5 rounded-full">
                         <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
                         Open to work
                       </Badge>
                     )}
                   </div>
-                  <p className="mt-1 text-lg text-muted-foreground">{dev.title}</p>
+                  {mockExtras?.title && <p className="mt-1 text-lg text-muted-foreground">{mockExtras.title}</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <MapPin className="h-4 w-4" /> {dev.location}
-                    </span>
-                    <span>{dev.experienceYears} years experience</span>
-                    <span>{dev.followers.toLocaleString()} followers</span>
+                    {mockExtras?.location && (
+                      <span className="flex items-center gap-1.5">
+                        <MapPin className="h-4 w-4" /> {mockExtras.location}
+                      </span>
+                    )}
+                    {profile.fieldsVisible.experienceYears !== false && profile.experienceYears != null && (
+                      <span>{profile.experienceYears} years experience</span>
+                    )}
+                    {mockExtras?.followers != null && <span>{mockExtras.followers.toLocaleString()} followers</span>}
                   </div>
                 </div>
               </div>
@@ -72,49 +159,65 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[280px_1fr]">
           {/* Sidebar */}
           <aside className="space-y-8">
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">About</h2>
-              <p className="mt-3 text-sm leading-relaxed">{dev.bio}</p>
-            </div>
-            <Separator />
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">Skills</h2>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {dev.skills.map((s) => (
-                  <Badge key={s} variant="secondary" className="font-normal">
-                    {s}
-                  </Badge>
-                ))}
+            {profile.fieldsVisible.bio !== false && profile.bio && (
+              <div>
+                <h2 className="text-sm font-medium text-muted-foreground">About</h2>
+                <p className="mt-3 text-sm leading-relaxed">{profile.bio}</p>
               </div>
-            </div>
-            <Separator />
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">Certifications</h2>
-              <ul className="mt-3 space-y-2">
-                {dev.certifications.map((c) => (
-                  <li key={c} className="flex items-start gap-2 text-sm">
-                    <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <span>{c}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <Separator />
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">Links</h2>
-              <ul className="mt-3 space-y-2">
-                {dev.links.map((l) => (
-                  <li key={l.label}>
-                    <Link
-                      href={l.href}
-                      className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-primary"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> {l.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            )}
+            {mockExtras && mockExtras.skills.length > 0 && (
+              <>
+                <Separator />
+                <div>
+                  <h2 className="text-sm font-medium text-muted-foreground">Skills</h2>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {mockExtras.skills.map((s) => (
+                      <Badge key={s} variant="secondary" className="font-normal">
+                        {s}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            {profile.fieldsVisible.certifications !== false &&
+              profile.certifications &&
+              profile.certifications.length > 0 && (
+                <>
+                  <Separator />
+                  <div>
+                    <h2 className="text-sm font-medium text-muted-foreground">Certifications</h2>
+                    <ul className="mt-3 space-y-2">
+                      {profile.certifications.map((c) => (
+                        <li key={c} className="flex items-start gap-2 text-sm">
+                          <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                          <span>{c}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
+            {profile.fieldsVisible.links !== false && profile.links && profile.links.length > 0 && (
+              <>
+                <Separator />
+                <div>
+                  <h2 className="text-sm font-medium text-muted-foreground">Links</h2>
+                  <ul className="mt-3 space-y-2">
+                    {profile.links.map((l) => (
+                      <li key={l.url}>
+                        <Link
+                          href={l.url}
+                          className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> {l.label || l.url}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
           </aside>
 
           {/* Main */}
@@ -128,11 +231,15 @@ export default async function DeveloperPage({ params }: { params: Promise<{ user
             <div className="mt-10 flex items-center justify-between">
               <h2 className="text-xl font-semibold tracking-tight">Projects</h2>
             </div>
-            <div className="mt-6 grid gap-6 sm:grid-cols-2">
-              {devProjects.map((p) => (
-                <ProjectCard key={p.slug} project={p} />
-              ))}
-            </div>
+            {devProjects.length > 0 ? (
+              <div className="mt-6 grid gap-6 sm:grid-cols-2">
+                {devProjects.map((p) => (
+                  <ProjectCard key={p.slug} project={p} />
+                ))}
+              </div>
+            ) : (
+              <p className="mt-6 text-sm text-muted-foreground">No published projects yet.</p>
+            )}
           </div>
         </div>
       </main>
