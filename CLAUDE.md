@@ -59,6 +59,7 @@ Both apps now have real vitest suites (backend: route handlers with `supabaseAdm
 - **Supabase** (`@supabase/supabase-js`) for Postgres, Auth, and Storage. `backend/lib/supabaseClient.ts` exports `supabaseAdmin`, a service-role client (bypasses RLS) for admin operations like `auth.admin.createUser` — never expose `SUPABASE_SERVICE_ROLE_KEY` to frontend code.
 - Auth is fully owned by **Supabase Auth** (`auth.users`). App tables never store passwords or hashes — see `apex-context-files/decisions.md` (2026-07-26): a hand-rolled `password_hash` column was explicitly rejected in favor of `supabase.auth.admin.createUser` / `signInWithPassword`. The app's `public.users` table only mirrors `user_id` (FK to `auth.users.id`) plus profile fields.
 - `backend/lib/auth.ts` exports `requireAuth`, an Express middleware shared by every `auth:bearer` route: reads `Authorization: Bearer <token>`, validates it via `supabaseAdmin.auth.getUser(token)`, and attaches `req.userId`. Route handlers import it rather than re-checking bearer tokens themselves.
+- There is no separate `developer_profiles`/`DeveloperProfile` table — see `apex-context-files/decisions.md` (2026-07-27), same class of drift as the `password_hash` issue. `public.users.visibility_settings` holds `{ visibility: "public" | "private" | "unlisted", fieldVisibility: { [field]: "public" | "private" } }` for the whole account. Visibility enforcement is application-level (the public-profile route filters fields in JS after fetching via `supabaseAdmin`), not RLS — consistent with every other route, since the backend always uses the service-role client.
 
 ### Session handling (frontend ↔ backend)
 
@@ -81,6 +82,8 @@ The auth token is a Supabase session JWT, stored as an **HttpOnly cookie** (`out
 - `POST /api/v1/auth/login` (`backend/api/v1/auth/login.ts`) — resolves `username` → `email` against `public.users`, then delegates to `supabase.auth.signInWithPassword`. Checks username existence (404) before attempting sign-in (401), so an unregistered username never falls through to a generic invalid-credentials message. Returns `{ token, userId }` per `EP-2`.
 - `GET /api/v1/users/me/profile` (`backend/api/v1/users/me/profile.ts`) — `requireAuth`-gated, returns the authenticated user's profile fields (camelCase) per `EP-3`.
 - `PUT /api/v1/users/me/profile` (same file) — `requireAuth`-gated, partial update. `name` is treated as required on every call despite `EP-4` marking it `name?:string` — the dev pack's own steps/Test Assertions and `SC-2` both demand 400 on a missing name; all other fields are genuinely optional/partial. Rejects the whole update (422) if any `links[].url` is invalid — no partial save.
+- `PUT /api/v1/users/me/profile/visibility` (`backend/api/v1/users/me/profile/visibility.ts`) — `requireAuth`-gated, writes `{ visibility, fieldVisibility }` into `users.visibility_settings` as one JSONB blob per `EP-5`. `fieldVisibility` defaults to `{}` when omitted rather than being strictly required (`EP-5` has no `?` on it) — same usability-over-literal-spec call as `EP-4`'s `name`.
+- `GET /api/v1/users/{username}/public-profile` (`backend/api/v1/users/[username]/public-profile.ts`) — no auth, per `EP-6`. An unconfigured profile (never called `EP-5`) defaults to `visibility: "public"` — an unreachable-by-default profile would contradict what this product is for. Returns 403 `profile_private` if private; otherwise omits any field marked `"private"` in `fieldVisibility` and echoes back which fields are visible via `fieldsVisible`.
 
 ### Routing (frontend, App Router)
 
@@ -93,7 +96,8 @@ File-based routing under `frontend/app/`:
 - `app/profile/page.tsx` → `/profile` (server component; reads the session cookie, redirects to `/login` if missing/rejected, fetches `GET /api/v1/users/me/profile`, renders the editable `ProfileEditForm`)
 - `app/api/session/route.ts` → `POST /api/session` (sets the HttpOnly session cookie after login)
 - `app/api/profile/route.ts` → `PUT /api/profile` (proxies to the backend PUT endpoint, attaching the Bearer header from the cookie)
-- `app/developer/[username]/page.tsx` → developer public profile (server component; uses `notFound()` for missing users)
+- `app/api/profile/visibility/route.ts` → `PUT /api/profile/visibility` (same proxy pattern, forwards to `PUT /api/v1/users/me/profile/visibility`)
+- `app/developer/[username]/page.tsx` → developer public profile. **Hybrid, deliberately** (see `decisions.md` 2026-07-27): fetches real `name`/`bio`/`experienceYears`/`certifications`/`links`/`visibility` from `GET /api/v1/users/{username}/public-profile` (respecting `fieldsVisible`, showing a "not available" message on 403), but falls back to `lib/mock-data.ts` when the backend 404s or is unreachable — the 3 demo developers only exist in mock data, never in the real `users` table. Skills tags, follower count, and the "open to work" badge stay mock-only (no real field for them); the Projects grid stays on `mock-data.ts` keyed by username (Projects/portfolio isn't a real feature yet — story 9431636+). Uses `cache: "no-store"`, so despite still having `generateStaticParams`, this route is now dynamic (`ƒ`), not prerendered (`●`) — correct, since a profile's visibility must never serve from a stale build-time cache.
 - `app/project/[slug]/page.tsx` → project case-study page (server component; uses `notFound()` for missing projects)
 - `app/layout.tsx` — root layout: fonts, `<Analytics />`, global metadata/viewport
 
@@ -113,6 +117,10 @@ Tailwind v4 tokens defined in `frontend/app/globals.css` (`@theme inline` block 
 
 `frontend/vitest.config.ts` does **not** set `globals: true` — test files import `describe`/`it`/`expect`/`vi` explicitly from `"vitest"` rather than relying on ambient globals. Because of that, React Testing Library's automatic per-test `cleanup()` (which detects a global `afterEach`) doesn't fire on its own; `frontend/vitest.setup.ts` registers it manually (`afterEach(cleanup)`). Skipping this silently leaves previous tests' DOM trees mounted, which surfaces as confusing "found multiple elements" errors in a *later* test in the same file, not the one that actually leaked.
 
+Two more test quirks worth knowing before debugging either from scratch:
+- **Base UI's `Select`** doesn't resolve its displayed value label under jsdom without opening the listbox first — `getByText("Public")` on a closed `Select`'s current value will fail even though it renders fine in a real browser. Assert on `getByRole("combobox", { name: ... })` instead (see `ProfileVisibilitySettings.test.tsx`).
+- **Backend `vitest run`'s own summary tally undercounts test files whose path has a bracket segment** (e.g. `backend/api/v1/users/[username]/public-profile.test.ts`) — the tests still genuinely run and pass (confirmed via `--reporter=verbose` and the exit code), only the "Test Files: N passed" line is wrong. Don't chase this as a real failure; check the verbose per-test output or exit code instead.
+
 ### Components
 
 - `components/site-header.tsx`, `components/site-footer.tsx` — shared chrome across pages
@@ -121,4 +129,5 @@ Tailwind v4 tokens defined in `frontend/app/globals.css` (`@theme inline` block 
 - `components/auth/RegistrationForm.tsx` — client component, calls `POST /api/v1/auth/register`, maps 409/422 to inline field errors
 - `components/auth/LoginForm.tsx` — client component, calls `POST /api/v1/auth/login`, maps 401/404 to inline errors, persists the session cookie via `POST /api/session`, redirects to `/profile` via `useRouter` on success
 - `components/profile/ProfileEditForm.tsx` — client component, editable name/bio/experienceYears/certifications/links (tag-input pattern reused from `app/new/page.tsx`); validates client-side, submits via `PUT /api/profile` (same-origin proxy, not the backend directly), maps 400/422 to inline errors, calls `router.refresh()` on success
+- `components/profile/ProfileVisibilitySettings.tsx` — client component, overall visibility via the shared `Select`, per-field toggles via plain checkboxes (no shadcn `Switch`/checkbox primitive exists in this scaffold, and adding one would be a new dependency the pack said not to add); saves via `PUT /api/profile/visibility`, calls `router.refresh()` on success
 - `components/ui/*` — shadcn primitives (Base UI-backed): avatar, badge, button, card, dropdown-menu, input, label, select, separator, tabs, textarea, tooltip
